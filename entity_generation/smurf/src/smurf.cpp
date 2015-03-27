@@ -381,11 +381,9 @@ namespace mars {
       }
     }
 
-    void SMURF::handleInertial(ConfigMap *map, const boost::shared_ptr<urdf::Link> &link) {
-      if (link->inertial) {
+    void SMURF::createInertial(ConfigMap *map, const boost::shared_ptr<urdf::Link> &link) {
         (*map)["density"] = 0.0;
         (*map)["mass"] = link->inertial->mass;
-        // handle inertial
         (*map)["i00"] = link->inertial->ixx;
         (*map)["i01"] = link->inertial->ixy;
         (*map)["i02"] = link->inertial->ixz;
@@ -395,10 +393,6 @@ namespace mars {
         (*map)["i20"] = link->inertial->ixz;
         (*map)["i21"] = link->inertial->iyz;
         (*map)["i22"] = link->inertial->izz;
-        (*map)["inertia"] = true;
-      } else {
-        (*map)["inertia"] = false;
-      }
     }
 
     void SMURF::calculatePose(ConfigMap *map, const boost::shared_ptr<urdf::Link> &link) {
@@ -553,6 +547,26 @@ namespace mars {
       return equal;
     }
 
+    bool SMURF::isNullPos(const urdf::Pose &p) {
+      bool zero = true;
+      double epsilon = 0.0000000001;
+      if (p1.position.x > epsilon || p1.position.x < -epsilon)
+        zero = false;
+      if (p1.position.y > epsilon || p1.position.y < -epsilon)
+        zero = false;
+      if (p1.position.z > epsilon || p1.position.z < -epsilon)
+        zero = false;
+      if (p1.rotation.x > epsilon || p1.position.x < -epsilon)
+        zero = false;
+      if (p1.rotation.y > epsilon || p1.position.y < -epsilon)
+        zero = false;
+      if (p1.rotation.z > epsilon || p1.position.z < -epsilon)
+        zero = false;
+      if (p1.rotation.w > 1 + epsilon || p1.position.w < 1 - epsilon)
+        zero = false;
+      return zero;
+    }
+
     void SMURF::handleCollision(ConfigMap *map, const boost::shared_ptr<urdf::Collision> &c) {
       boost::shared_ptr<urdf::Geometry> tmpGeometry = c->geometry;
       Vector size(0.0, 0.0, 0.0);
@@ -628,65 +642,27 @@ namespace mars {
     }
 
     void SMURF::handleKinematics(boost::shared_ptr<urdf::Link> link) {
-      ConfigMap config;
-      // holds the index of the next visual object to load
-      size_t visualArrayIndex = 0;
-      // holds the index of the next collision object to load
-      size_t collisionArrayIndex = 0;
+      ConfigMap linkconfig;
+      size_t visualArrayIndex = 0; // index of the next visual object to load
+      size_t collisionArrayIndex = 0; // index of the next collision object to load
       bool loadVisual = link->visual;
-      bool loadCollision = link->collision;
+      bool separateInertial = false;
       Vector v;
       Quaternion q;
 
-      config["name"] = link->name;
-      config["index"] = nextNodeID++;
-
+      linkconfig["name"] = link->name;
+      linkconfig["index"] = nextNodeID++;
       nodeIDMap[link->name] = nextNodeID - 1;
-
-      // todo: if we don't have any joints connected we need some more
-      //       special handling and change the handling below
-      //       config["movable"] ?!?
-      // TODO: we should also read materials from the visual object here, as URDF does not
-      //         necessarily define them on the top level of the file
-
-      config["movable"] = true;
-
-      // we do most of the special case handling here:
-      { /** special case handling **/
-        bool needGroupID = false;
-        if (link->visual_array.size() > 1 || link->collision_array.size() > 1) {
-          needGroupID = true;
-        }
-        if (link->collision && link->inertial) {
-          if (!isEqualPos(link->collision->origin, link->inertial->origin)) {
-            loadCollision = false;
-            needGroupID = true;
-          }
-        }
-        if (link->visual && link->collision) {
-          if (loadCollision && link->collision->geometry->type == urdf::Geometry::MESH) {
-            if (link->visual->geometry->type != urdf::Geometry::MESH) {
-              loadVisual = false;
-              needGroupID = true;
-            } else {
-              if (((urdf::Mesh*) link->collision->geometry.get())->filename
-                  != ((urdf::Mesh*) link->visual->geometry.get())->filename) {
-                loadVisual = false;
-                needGroupID = true;
-              }
-            }
-          }
-        }
-        if (needGroupID) {
-          // we need to group mars nodes
-          config["groupid"] = nextGroupID++;
-        } else {
-          config["groupid"] = 0;
-        }
-      }
+      linkconfig["movable"] = true;
 
       // we always handle the inertial
-      handleInertial(&config, link);
+      if (link->inertial) {
+        createInertial(&linkconfig, link);
+      } else {
+        linkconfig["mass"] = 0.001;
+        linkconfig["inertia"] = false;
+      }
+
 
       // calculates the pose including all case handling
       calculatePose(&config, link);
@@ -714,7 +690,7 @@ namespace mars {
         createFakeCollision(&config);
       }
 
-      debugMap["links"] += config;
+      debugMap["links"] += linkconfig;
       nodeList.push_back(config);
 
       // now we have all information for the main node and can create additional
@@ -1212,6 +1188,42 @@ namespace mars {
   }        // end of namespace smurf
 }
 // end of namespace mars
+
+
+
+// deprecated code from handleKinematics
+
+// todo: if we don't have any joints connected we need some more
+//       special handling and change the handling below
+// TODO: we should also read materials from the visual object here, as URDF does not
+//         necessarily define them on the top level of the file
+
+// The following code is disabled. We only need this code if we want to reduce the number of nodes created.
+/* The following codes checks how the nodes representing a link have to be structured. One node is always created
+* at the origin or the link. If any other component of the link (inertial, collision element, visual element) is
+* present that does not share the link's origin or if more than one collision / visual element is present, we need
+* to create  group of nodes to represent the link.
+*/
+// if any of the following conditions are met, we need more than one node to represent the link
+//      if (link->visual_array.size() > 1 || link->collision_array.size() > 1
+//              || !isNullPos(link->inertial->origin)
+//              || link->visual && !isNullPos(link->visual->origin)
+//              || link->collision && !isNullPos(link->collision->origin)) {
+//        needGroupID = true;
+//      }
+//      //
+//      if (link->collision && link->inertial) {
+//        if (!isEqualPos(link->collision->origin, link->inertial->origin)) {
+//          loadCollision = false;
+//          needGroupID = true;
+//        }
+//      }
+//      // set grouppid accordingly
+//      if (needGroupID) {
+//        linkconfig["groupid"] = nextGroupID++;
+//      } else {
+//        linkconfig["groupid"] = 0;
+//      }
 
 DESTROY_LIB(mars::smurf::SMURF);
 CREATE_LIB(mars::smurf::SMURF);
