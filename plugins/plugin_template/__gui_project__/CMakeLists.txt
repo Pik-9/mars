@@ -4,13 +4,12 @@ set(PROJECT_DESCRIPTION "__description__")
 cmake_minimum_required(VERSION 2.8.11)
 include(FindPkgConfig)
 
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+
 find_package(mars)
 mars_defaults()
 define_module_info()
-
-find_package(Qt5Widgets REQUIRED)
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 pkg_check_modules(PKGCONFIG REQUIRED
 			    lib_manager
@@ -35,13 +34,22 @@ set(HEADERS
 	src/__classname___MainWin.cpp
 )
 
-
-
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
-qt5_use_modules(${PROJECT_NAME} Widgets)
-target_link_libraries(${PROJECT_NAME}
-                      ${PKGCONFIG_LIBRARIES}
-)
+find_package(Qt5Widgets)
+if (${Qt5Widgets_FOUND})
+  qt5_use_modules(${PROJECT_NAME} Widgets)
+  target_link_libraries(${PROJECT_NAME}
+                        ${PKGCONFIG_LIBRARIES}
+  )
+else(${Qt5Widgets_FOUND})
+  find_package(Qt4 REQUIRED)
+  include(${QT_USE_FILE})
+  target_link_libraries(${PROJECT_NAME}
+                        ${PKGCONFIG_LIBRARIES}
+                        ${QT_LIBRARIES}
+  )
+endif(${Qt5Widgets_FOUND})
+
 
 if(WIN32)
   set(LIB_INSTALL_DIR bin) # .dll are in PATH, like executables
